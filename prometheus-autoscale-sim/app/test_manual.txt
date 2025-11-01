@@ -1,0 +1,37 @@
+# Start the app
+python3 app.py
+
+# Access main endpoint
+curl http://localhost:8000/
+
+# View Prometheus metrics
+curl http://localhost:8000/metrics
+
+# Increase load
+curl http://localhost:8000/load/increase
+
+# Trigger spike
+curl http://localhost:8000/load/spike
+
+# Check health
+curl http://localhost:8000/health
+```
+
+## Sample Metrics Output:
+```
+# HELP webapp_response_time_seconds Simulated response time in seconds
+# TYPE webapp_response_time_seconds gauge
+webapp_response_time_seconds 0.234
+
+# HELP webapp_request_count Simulated request count
+# TYPE webapp_request_count gauge
+webapp_request_count 67
+
+# HELP webapp_total_requests Total number of requests processed
+# TYPE webapp_total_requests counter
+webapp_total_requests{endpoint="/",method="GET",status="200"} 145
+
+# HELP webapp_request_duration_seconds Request duration in seconds
+# TYPE webapp_request_duration_seconds histogram
+webapp_request_duration_seconds_bucket{endpoint="/",method="GET",le="0.1"} 23
+webapp_request_duration_seconds_bucket{endpoint="/",method="GET",le="0.5"} 102
