@@ -1,1 +1,17 @@
+---
+# Ansible Galaxy Requirements
+# This file specifies external Ansible collections and roles needed for the auto-scaler
 
+collections:
+  # Docker collection for container management
+  - name: community.docker
+    version: "3.4.11"
+    source: https://galaxy.ansible.com
+
+  # General purpose community collection
+  - name: community.general
+    version: "8.0.2"
+    source: https://galaxy.ansible.com
+
+# Roles (if needed in the future)
+roles: []
