@@ -1,0 +1,31 @@
+# Builder stage
+FROM python:3.11-slim as builder
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Runtime stage
+FROM python:3.11-slim
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+COPY app.py .
+ENV PATH=/root/.local/bin:$PATH
+USER 1000
+EXPOSE 8000
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
+
+-----------------------------------------------------------------------------------
+Testing the Dockerfile:
+bash# Build
+docker build -t webapp:test ./app
+
+# Run with environment variables
+docker run -p 8000:8000 \
+  -e APP_NAME=webapp-test \
+  -e FLASK_ENV=development \
+  webapp:test
+
+# Test endpoints
+curl http://localhost:8000/
+curl http://localhost:8000/health
+curl http://localhost:8000/metrics
