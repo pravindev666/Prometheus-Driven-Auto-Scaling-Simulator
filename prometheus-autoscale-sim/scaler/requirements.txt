@@ -1,1 +1,23 @@
 
+# Python Dependencies for Auto-Scaler Service
+# ============================================
+
+# HTTP requests for Prometheus API
+requests==2.31.0
+
+# Ansible for infrastructure automation
+ansible==9.0.1
+ansible-core==2.16.0
+
+# Additional Ansible dependencies
+jinja2==3.1.2
+PyYAML==6.0.1
+cryptography==41.0.7
+paramiko==3.4.0
+
+# Docker SDK for Python (alternative to CLI)
+docker==7.0.0
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
