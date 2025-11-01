@@ -1,1 +1,192 @@
+---
+# Prometheus Alert Rules
+# These rules define conditions that trigger alerts based on metrics
 
+groups:
+  # Web application performance alerts
+  - name: webapp_performance
+    interval: 10s
+    rules:
+      # Alert when average response time is high
+      - alert: HighResponseTime
+        expr: avg_over_time(webapp_response_time_seconds[30s]) > 0.5
+        for: 10s
+        labels:
+          severity: warning
+          component: webapp
+          type: performance
+        annotations:
+          summary: "High response time detected"
+          description: "Average response time over 30s window is {{ $value | humanize }}s (threshold: 0.5s)"
+          impact: "Users may experience slow page loads"
+          action: "Auto-scaler will attempt to add more replicas"
+
+      # Alert when response time is critically high
+      - alert: CriticalResponseTime
+        expr: avg_over_time(webapp_response_time_seconds[30s]) > 1.0
+        for: 30s
+        labels:
+          severity: critical
+          component: webapp
+          type: performance
+        annotations:
+          summary: "Critical response time detected"
+          description: "Average response time over 30s window is {{ $value | humanize }}s (threshold: 1.0s)"
+          impact: "Severe performance degradation affecting all users"
+          action: "Immediate scaling required; check for underlying issues"
+
+      # Alert when response time is very low (might indicate no traffic)
+      - alert: VeryLowResponseTime
+        expr: avg_over_time(webapp_response_time_seconds[1m]) < 0.1
+        for: 1m
+        labels:
+          severity: info
+          component: webapp
+          type: performance
+        annotations:
+          summary: "Very low response time detected"
+          description: "Average response time is {{ $value | humanize }}s - may indicate low traffic"
+          impact: "Possible scale-down opportunity"
+          action: "Auto-scaler may reduce replicas to save resources"
+
+  # Application availability alerts
+  - name: webapp_availability
+    interval: 15s
+    rules:
+      # Alert when service is down
+      - alert: ServiceDown
+        expr: up{job="webapp"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          component: webapp
+          type: availability
+        annotations:
+          summary: "Web application instance is down"
+          description: "Instance {{ $labels.instance }} has been down for 30 seconds"
+          impact: "Reduced capacity; potential service disruption"
+          action: "Check container logs and restart if necessary"
+
+      # Alert when multiple instances are down
+      - alert: MultipleInstancesDown
+        expr: count(up{job="webapp"} == 0) > 1
+        for: 1m
+        labels:
+          severity: critical
+          component: webapp
+          type: availability
+        annotations:
+          summary: "Multiple web application instances are down"
+          description: "{{ $value }} instances are currently down"
+          impact: "Severe capacity reduction; likely service disruption"
+          action: "Investigate infrastructure issues immediately"
+
+      # Alert when all instances are down
+      - alert: AllInstancesDown
+        expr: count(up{job="webapp"}) == 0 OR absent(up{job="webapp"})
+        for: 1m
+        labels:
+          severity: critical
+          component: webapp
+          type: availability
+        annotations:
+          summary: "All web application instances are down"
+          description: "Complete service outage detected"
+          impact: "Total service unavailability"
+          action: "Emergency response required; check Docker and network"
+
+  # Capacity and scaling alerts
+  - name: webapp_capacity
+    interval: 30s
+    rules:
+      # Alert when at maximum capacity
+      - alert: MaxCapacityReached
+        expr: count(up{job="webapp"} == 1) >= 6
+        for: 2m
+        labels:
+          severity: warning
+          component: webapp
+          type: capacity
+        annotations:
+          summary: "Maximum replica count reached"
+          description: "Currently running {{ $value }} instances (maximum: 6)"
+          impact: "Cannot scale further to handle additional load"
+          action: "Monitor performance; consider increasing MAX_REPLICAS"
+
+      # Alert when running at minimum capacity with high load
+      - alert: InsufficientCapacity
+        expr: count(up{job="webapp"} == 1) <= 1 AND avg_over_time(webapp_response_time_seconds[1m]) > 0.6
+        for: 1m
+        labels:
+          severity: warning
+          component: webapp
+          type: capacity
+        annotations:
+          summary: "Insufficient capacity for current load"
+          description: "Only {{ $value }} instance running with high response time"
+          impact: "Performance degradation due to under-provisioning"
+          action: "Wait for auto-scaler to add capacity"
+
+  # Request volume monitoring
+  - name: webapp_traffic
+    interval: 30s
+    rules:
+      # Alert on unusual traffic spike
+      - alert: TrafficSpike
+        expr: rate(webapp_request_count[1m]) > 1000
+        for: 2m
+        labels:
+          severity: info
+          component: webapp
+          type: traffic
+        annotations:
+          summary: "Traffic spike detected"
+          description: "Request rate is {{ $value | humanize }} req/s (normal: <1000 req/s)"
+          impact: "Increased load on infrastructure"
+          action: "Monitor auto-scaling response"
+
+      # Alert on traffic drop (potential issue)
+      - alert: TrafficDropped
+        expr: rate(webapp_request_count[5m]) < 1 AND rate(webapp_request_count[10m] offset 10m) > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: webapp
+          type: traffic
+        annotations:
+          summary: "Significant traffic drop detected"
+          description: "Request rate dropped from normal levels"
+          impact: "Possible service issue or upstream problem"
+          action: "Check application logs and external dependencies"
+
+  # Prometheus self-monitoring
+  - name: prometheus_health
+    interval: 30s
+    rules:
+      # Alert when Prometheus is having scrape issues
+      - alert: PrometheusScrapeFailing
+        expr: up{job="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: prometheus
+          type: health
+        annotations:
+          summary: "Prometheus self-scrape failing"
+          description: "Prometheus cannot scrape its own metrics"
+          impact: "Monitoring system may be unhealthy"
+          action: "Check Prometheus logs and restart if necessary"
+
+      # Alert when target scrapes are failing
+      - alert: HighScrapeFailureRate
+        expr: rate(prometheus_target_scrapes_exceeded_sample_limit_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: prometheus
+          type: health
+        annotations:
+          summary: "High scrape failure rate"
+          description: "{{ $value | humanizePercentage }} of scrapes are failing"
+          impact: "Incomplete metrics collection"
+          action: "Check target health and Prometheus configuration"
