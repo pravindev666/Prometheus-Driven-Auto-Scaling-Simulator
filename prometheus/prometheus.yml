@@ -1,0 +1,89 @@
+# Prometheus Configuration File
+# This file defines how Prometheus collects and processes metrics
+
+global:
+  # How frequently to scrape targets by default
+  scrape_interval: 5s
+  
+  # How frequently to evaluate alert rules
+  evaluation_interval: 5s
+  
+  # How long until a scrape request times out
+  scrape_timeout: 4s
+  
+  # External labels to attach to all time series or alerts
+  external_labels:
+    cluster: 'local-autoscale-sim'
+    environment: 'development'
+
+# Alertmanager configuration (optional - not used in this setup)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Load alert rules from files
+rule_files:
+  - "/etc/prometheus/rules/alert_rules.yml"
+
+# Scrape configuration for collecting metrics
+scrape_configs:
+  # Job to scrape Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+          component: 'monitoring'
+
+  # Job to scrape Flask web application instances
+  - job_name: 'webapp'
+    # How often to scrape this job (overrides global)
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    
+    # Path where metrics are exposed
+    metrics_path: /metrics
+    
+    # Service discovery configuration
+    # Using DNS-based discovery for Docker Compose services
+    dns_sd_configs:
+      - names:
+          - 'webapp'
+        type: 'A'
+        port: 8000
+    
+    # Relabeling rules to add/modify labels
+    relabel_configs:
+      # Add instance label with container name
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+).*'
+        replacement: '${1}'
+      
+      # Add custom label for service type
+      - target_label: service_type
+        replacement: 'web'
+
+  # Alternative static configuration if DNS discovery doesn't work
+  # Uncomment this and comment out dns_sd_configs above if needed
+  # - job_name: 'webapp-static'
+  #   static_configs:
+  #     - targets: ['webapp:8000']
+  #       labels:
+  #         service: 'webapp'
+  #         instance: 'webapp-1'
+
+# Storage configuration
+storage:
+  # Time series database retention
+  tsdb:
+    # Retain data for 15 days
+    retention.time: 15d
+    
+    # Minimum block duration
+    min_block_duration: 2h
+    
+    # Maximum block duration
+    max_block_duration: 24h
