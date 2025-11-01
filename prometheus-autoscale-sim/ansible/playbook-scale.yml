@@ -1,1 +1,208 @@
 
+---
+# Ansible Playbook for Scaling Docker Compose Services
+# This playbook adjusts the number of replicas for a specified service
+# Called by the Python scaler service when scaling decisions are made
+
+- name: Scale Docker Compose Service
+  hosts: localhost
+  gather_facts: false
+  
+  vars:
+    # Docker Compose file location (mounted from host)
+    compose_file: "/docker-compose.yml"
+    
+    # Service to scale (default: webapp)
+    service_name: "{{ lookup('env', 'SERVICE_NAME') | default('webapp', true) }}"
+    
+    # Target number of replicas (passed as extra var from scaler)
+    target_replicas: 1
+    
+    # Project name (from environment)
+    project_name: "{{ lookup('env', 'COMPOSE_PROJECT_NAME') | default('prometheus-autoscale-sim', true) }}"
+    
+    # Timeout for docker-compose operations
+    compose_timeout: 120
+    
+    # Maximum allowed replicas (safety limit)
+    max_replicas: 10
+    
+    # Minimum allowed replicas (safety limit)
+    min_replicas: 1
+
+  tasks:
+    - name: Display scaling operation header
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Docker Compose Scaling Operation"
+          - "=========================================="
+
+    - name: Display scaling parameters
+      ansible.builtin.debug:
+        msg:
+          - "Service Name: {{ service_name }}"
+          - "Target Replicas: {{ target_replicas }}"
+          - "Project Name: {{ project_name }}"
+          - "Compose File: {{ compose_file }}"
+          - "Timestamp: {{ ansible_date_time.iso8601 }}"
+
+    - name: Validate target replicas is within limits
+      ansible.builtin.assert:
+        that:
+          - target_replicas | int >= min_replicas
+          - target_replicas | int <= max_replicas
+          - target_replicas | int > 0
+        fail_msg: "target_replicas must be between {{ min_replicas }} and {{ max_replicas }}"
+        success_msg: "Target replicas validated: {{ target_replicas }}"
+
+    - name: Check if Docker Compose file exists
+      ansible.builtin.stat:
+        path: "{{ compose_file }}"
+      register: compose_file_stat
+      failed_when: not compose_file_stat.stat.exists
+
+    - name: Verify Docker daemon is accessible
+      ansible.builtin.command:
+        cmd: docker info
+      register: docker_info
+      changed_when: false
+      failed_when: docker_info.rc != 0
+
+    - name: Get current service status
+      ansible.builtin.command:
+        cmd: >
+          docker ps
+          --filter name={{ project_name }}_{{ service_name }}
+          --filter status=running
+          --format '{{.Names}}'
+      register: current_containers
+      changed_when: false
+
+    - name: Display current container count
+      ansible.builtin.debug:
+        msg: 
+          - "Currently running: {{ current_containers.stdout_lines | length }} replica(s)"
+          - "Target: {{ target_replicas }} replica(s)"
+          - "Action: {% if (current_containers.stdout_lines | length) < (target_replicas | int) %}SCALE UP{% elif (current_containers.stdout_lines | length) > (target_replicas | int) %}SCALE DOWN{% else %}NO CHANGE{% endif %}"
+
+    - name: Determine scaling action
+      ansible.builtin.set_fact:
+        scaling_action: >-
+          {% if (current_containers.stdout_lines | length) < (target_replicas | int) %}
+          scale_up
+          {% elif (current_containers.stdout_lines | length) > (target_replicas | int) %}
+          scale_down
+          {% else %}
+          no_change
+          {% endif %}
+
+    - name: Log scaling decision
+      ansible.builtin.debug:
+        msg: "Scaling action determined: {{ scaling_action }}"
+
+    - name: Scale service using docker-compose
+      ansible.builtin.shell: |
+        docker-compose -f {{ compose_file }} \
+          -p {{ project_name }} \
+          up -d --scale {{ service_name }}={{ target_replicas }} \
+          --no-recreate \
+          --remove-orphans
+      environment:
+        COMPOSE_HTTP_TIMEOUT: "{{ compose_timeout }}"
+      register: scale_result
+      changed_when: "'Creating' in scale_result.stderr or 'Stopping' in scale_result.stderr or 'Starting' in scale_result.stderr"
+      failed_when: scale_result.rc != 0
+
+    - name: Display docker-compose output
+      ansible.builtin.debug:
+        msg:
+          - "Docker Compose STDOUT:"
+          - "{{ scale_result.stdout_lines }}"
+          - "Docker Compose STDERR:"
+          - "{{ scale_result.stderr_lines }}"
+      when: scale_result.stdout_lines | length > 0 or scale_result.stderr_lines | length > 0
+
+    - name: Wait for containers to stabilize
+      ansible.builtin.pause:
+        seconds: 5
+        prompt: "Waiting for containers to stabilize..."
+
+    - name: Verify new service status
+      ansible.builtin.command:
+        cmd: >
+          docker ps
+          --filter name={{ project_name }}_{{ service_name }}
+          --filter status=running
+          --format '{{.Names}}'
+      register: new_containers
+      changed_when: false
+      retries: 3
+      delay: 2
+      until: new_containers.stdout_lines | length == target_replicas | int
+
+    - name: Display scaling result summary
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "Scaling Operation Summary"
+          - "=========================================="
+          - "Previous replica count: {{ current_containers.stdout_lines | length }}"
+          - "Current replica count: {{ new_containers.stdout_lines | length }}"
+          - "Target replica count: {{ target_replicas }}"
+          - "Status: {% if new_containers.stdout_lines | length == target_replicas | int %}SUCCESS{% else %}PARTIAL{% endif %}"
+          - "Timestamp: {{ ansible_date_time.iso8601 }}"
+          - "=========================================="
+
+    - name: Verify scaling success
+      ansible.builtin.assert:
+        that:
+          - new_containers.stdout_lines | length == target_replicas | int
+        fail_msg: "Scaling verification failed: Expected {{ target_replicas }} replicas, found {{ new_containers.stdout_lines | length }}"
+        success_msg: "Scaling verified successfully: {{ new_containers.stdout_lines | length }} replicas running"
+
+    - name: Display running container details
+      ansible.builtin.command:
+        cmd: >
+          docker ps
+          --filter name={{ project_name }}_{{ service_name }}
+          --filter status=running
+          --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+      register: container_details
+      changed_when: false
+
+    - name: Show container details
+      ansible.builtin.debug:
+        msg: "{{ container_details.stdout_lines }}"
+
+    - name: Log successful scaling event
+      ansible.builtin.debug:
+        msg: "Scaling event completed: {{ service_name }} scaled to {{ target_replicas }} replicas at {{ ansible_date_time.iso8601 }}"
+      when: new_containers.stdout_lines | length == target_replicas | int
+
+  post_tasks:
+    - name: Cleanup task - Check for orphaned containers
+      ansible.builtin.command:
+        cmd: >
+          docker ps -a
+          --filter name={{ project_name }}_{{ service_name }}
+          --filter status=exited
+          --format '{{.Names}}'
+      register: orphaned_containers
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display orphaned containers if any
+      ansible.builtin.debug:
+        msg: "Found {{ orphaned_containers.stdout_lines | length }} orphaned container(s)"
+      when: orphaned_containers.stdout_lines | length > 0
+
+  handlers:
+    - name: Log scaling metrics
+      ansible.builtin.debug:
+        msg:
+          - "Scaling metrics:"
+          - "  - Service: {{ service_name }}"
+          - "  - From: {{ current_containers.stdout_lines | length }}"
+          - "  - To: {{ target_replicas }}"
+          - "  - Duration: {{ (ansible_date_time.epoch | int) - (ansible_date_time.epoch | int) }}s"
